@@ -10,26 +10,50 @@
 #define ZREAD A3
 #define POSCOLOR WHITE
 #define NEGCOLOR RED
-
-/////////// Matrix Stuff for Sliding Dot ///////////////
 bool showSlidingDot_toggle = true;
 
-                           Matrix grav(3,1);
-double dp[] = {64, 64, 0}; Matrix dotPos(3,1,dp);
-                           Matrix dotVel(3,1);
-                           Matrix dotAccl(3,1);
-                           Matrix AcclEndPoint(3,1);
-                           Matrix VelEndPoint(3,1);
+/////////// Dot Object Declaration ///////////////
+#define DOT_XSTART 64
+#define DOT_YSTART 64
+#define DOT_SIZE 5
+#define DOT_XMIN 0
+#define DOT_XMAX 127
+#define DOT_YMIN 10
+#define DOT_YMAX 127
+
+struct obj_dot {
+  Matrix position;
+  Matrix velocity;
+  Matrix accl;
+} dot = { Matrix(3,1), Matrix(3,1), Matrix(3,1) };
+
+// Other drawing vectors
+Matrix AcclEndPoint(3,1);
+Matrix VelEndPoint(3,1);
 
 double accelerationFactor = 2;
 double dampingFactor = 0.9;
 double dotMaxVel = 10;
 
-/////////// Min and max ADC values { X, Y, Z };
-static const int PROGMEM MINV[3] = {370, 413, 426};
-static const int PROGMEM MAXV[3] = {650, 613, 625};
+/////////// Food Object Declaration
+struct obj_food {
+  Matrix position;
+  char   color = BLUE;
+};
 
-////////// Actually accelerometer variables
+obj_food foodInstances[50];
+int      foodCount = 0;
+
+
+/////////// Game Variables
+int       score = 0;
+long      timeRemaining = 1000;
+
+/////////// Min and max ADC values { X, Y, Z };
+const int PROGMEM MINV[3] = {370, 413, 426};
+const int PROGMEM MAXV[3] = {650, 613, 625};
+
+////////// Actual accelerometer variables
 int x_vread;
 int y_vread;
 int z_vread;
@@ -44,102 +68,96 @@ void setup() {
   Serial.begin(9600);
   tft.begin();
   tft.setTextScale(2);
+
+  // Initialize Dot Position
+  dot.position(0) = DOT_XSTART;
+  dot.position(1) = DOT_YSTART;
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  readAcclData();
+
+  // Print to screen
+  clearSlidingDot();
+  dotMatrixMath();
+  drawSlidingDot();
+  drawVectors();
+  drawScorebar();
+
+  // Countdown
+  timeRemaining -= 1;
+
+  //Wait till next gamestep
+  delay(30);
+}
+
+void drawScorebar() {
+  tft.fillRect(60,0,128,10,BLACK);
+  
+  tft.setTextScale(1);
+  tft.setTextColor(WHITE,BLACK);
+  tft.setCursor(0,0);
+  tft.print("Score: ");
+  tft.print(score);
+
+  tft.setCursor(60,0);
+  tft.print(timeRemaining);
+}
+
+void drawSlidingDot() {
+  tft.fillCircle(dot.position(0),dot.position(1),DOT_SIZE,RED);
+}
+
+void drawVectors() {
+  tft.drawLine(dot.position(0),dot.position(1),AcclEndPoint(0),AcclEndPoint(1),GREEN);
+  tft.drawLine(dot.position(0),dot.position(1),VelEndPoint(0),VelEndPoint(1),BLUE);
+}
+
+void clearSlidingDot() {
+  tft.fillCircle(dot.position(0),dot.position(1),max(7,max(dot.velocity.norm()*6,dot.accl.norm()*21)),BLACK);
+}
+
+void dotMatrixMath() {
+  // Set Gravity
+  dot.accl(0) = x_accl; 
+  dot.accl(1) = -y_accl; 
+
+  // Integrate to Velocity
+  dot.velocity = dot.velocity*dampingFactor;
+  dot.velocity += dot.accl*accelerationFactor;
+  dot.velocity(0) = constrain(dot.velocity(0),-dotMaxVel,dotMaxVel);
+  dot.velocity(1) = constrain(dot.velocity(1),-dotMaxVel,dotMaxVel);
+  
+  // Integrate to Position
+  dot.position += dot.velocity;
+  dotWallCollisionHandle();
+
+  // Update vector drawing points
+  AcclEndPoint = dot.position + dot.accl*20;
+  VelEndPoint = dot.position + dot.velocity*5;
+}
+
+void dotWallCollisionHandle() {
+  dot.position(0) = constrain(dot.position(0),DOT_XMIN+DOT_SIZE,DOT_XMAX-DOT_SIZE);
+  dot.position(1) = constrain(dot.position(1),DOT_YMIN+DOT_SIZE,DOT_YMAX-DOT_SIZE);
+
+  if (dot.position(0) == DOT_XMIN+DOT_SIZE && dot.velocity(0) < 0) {dot.velocity(0) = 0;}
+  if (dot.position(1) == DOT_YMIN+DOT_SIZE && dot.velocity(1) < 0) {dot.velocity(1) = 0;}
+  if (dot.position(0) == DOT_XMAX-DOT_SIZE && dot.velocity(0) > 0) {dot.velocity(0) = 0;}
+  if (dot.position(1) == DOT_YMAX-DOT_SIZE && dot.velocity(1)> 0) {dot.velocity(1) = 0;}
+}
+
+void readAcclData() {
+  // Read accelerometer voltages from ADC and convert to -1 to 1 scale.
   x_vread = analogRead(XREAD);
   y_vread = analogRead(YREAD);
   z_vread = analogRead(ZREAD);
   x_accl = (float)map((x_vread*100), (MINV[0]*100), (MAXV[0]*100), 100, -100)/100.0;
   y_accl = (float)map((y_vread*100), (MINV[1]*100), (MAXV[1]*100), 100, -100)/100.0;
   z_accl = (float)map((z_vread*100), (MINV[2]*100), (MAXV[2]*100), 100, -100)/100.0;
-    
-  Serial.print("X: "); Serial.print(x_accl); Serial.print(", Y: "); Serial.print(y_accl); Serial.print(", Z: "); Serial.println(z_accl);
-  if (Serial.available()) {
-     if (Serial.read() == 's') {showSlidingDot_toggle=!showSlidingDot_toggle; Serial.print(showSlidingDot_toggle);}
-  }
-  // Print out data
-  if (!showSlidingDot_toggle) {
-    showTextOutput();
-  }  else {
-    clearSlidingDot();
-    dotMatrixMath();
-    showSlidingDot();
-  }
-  delay(30);
-
-  if (abs(z_accl > 2.0)) { tft.setCursor(0,80); tft.setTextColor(GREEN); tft.print("Z-accl was\nOVER 9000"); }
-
-}
-
-// Draws the accelerometer values to the display
-void showTextOutput() {
-  //tft.clearScreen();              // Clear the entire screen
-  tft.setCursor(0,0);               // Reset cursor back to top of the screen
-  tft.fillRect(100,0,28,50,BLACK);  // Clear the edge of the screen
-
-  setTextColorBasedOnSign(x_accl);
-  tft.print("X-Accl: ");
-  tft.println(x_accl);
-    #ifdef SHOWRAW
-      tft.print("X-Raw: ");
-      tft.println(x_vread);
-    #endif
-  setTextColorBasedOnSign(y_accl);
-  tft.print("Y-Accl: ");
-  tft.println(y_accl);
-    #ifdef SHOWRAW
-      tft.print("Y-Raw: ");
-      tft.println(y_vread);
-    #endif
-  setTextColorBasedOnSign(z_accl);
-  tft.print("Z-Accl: ");
-  tft.println(z_accl);
-    #ifdef SHOWRAW
-      tft.print("Z-Raw: ");
-      tft.println(z_vread);
-    #endif
-}
-
-void showSlidingDot() {
-  tft.fillCircle(dotPos(0),dotPos(1),5,RED);
-  tft.drawLine(dotPos(0),dotPos(1),AcclEndPoint(0),AcclEndPoint(1),GREEN);
-  tft.drawLine(dotPos(0),dotPos(1),VelEndPoint(0),VelEndPoint(1),BLUE);
-}
-
-void clearSlidingDot() {
-  tft.fillCircle(dotPos(0),dotPos(1),max(7,max(dotVel.norm()*6,dotAccl.norm()*21)),BLACK);
-}
-
-void dotMatrixMath() {
-  // Set Gravity
-  grav(0) = x_accl; grav(1) = y_accl; grav(2) = z_accl;
-
-  // Calculate the normal acceleration vector
-  dotAccl = -grav; dotAccl(2) = 0;
-  dotAccl(0) = -dotAccl(0); // Fix Coordinate System difference between screen and accelerometer
-
-  dotVel = dotVel*dampingFactor;
-  dotVel += dotAccl*accelerationFactor;
-  dotVel(0) = constrain(dotVel(0),-dotMaxVel,dotMaxVel);
-  dotVel(1) = constrain(dotVel(1),-dotMaxVel,dotMaxVel);
   
-  dotPos += dotVel;
-  dotWallCollisionHandle();
-
-  AcclEndPoint = dotPos + dotAccl*20;
-  VelEndPoint = dotPos + dotVel*5;
-}
-
-void dotWallCollisionHandle() {
-  dotPos(0) = constrain(dotPos(0),0,128);
-  dotPos(1) = constrain(dotPos(1),0,128);
-
-  if (dotPos(0) == 0 && dotVel(0)<0) {dotVel(0) = 0;}
-  if (dotPos(1) == 0 && dotVel(1)<0) {dotVel(1) = 0;}
-  if (dotPos(0) == 128 && dotVel(0)>0) {dotVel(0) = 0;}
-  if (dotPos(1) == 128 && dotVel(1)>0) {dotVel(1) = 0;}
+  // Print Raw Acceleration Data 
+  Serial.print("X: "); Serial.print(x_accl); Serial.print(", Y: "); Serial.print(y_accl); Serial.print(", Z: "); Serial.println(z_accl);
 }
 
 inline void setTextColorBasedOnSign(float n) {
