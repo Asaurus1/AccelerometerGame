@@ -1,8 +1,15 @@
 #include <LinkedList.h>
 #include <Matrix.h>
-#include <TFT_ST7735.h>
+//#define ST7735_DISPL
+#define HX8357_DISPL
 
-//#define SHOWRAW
+#if defined(ST7735_DISPL)
+  #include <TFT_ST7735.h>
+#elif defined(HX8357_DISPL)
+  #include <HX8357_t3.h>
+#endif
+
+#define SHOWVECTORS
 
 #define _CS 10
 #define _DC 9
@@ -11,17 +18,47 @@
 #define ZREAD A3
 #define POSCOLOR WHITE
 #define NEGCOLOR RED
-bool showSlidingDot_toggle = true;
+
+/////////// Screen Stuff
+#if defined(ST7735_DISPL)
+  TFT_ST7735 tft = TFT_ST7735(_CS,_DC);
+  #define SCREENSIZE_X 128
+  #define SCREENSIZE_Y 128
+#elif defined(HX8357_DISPL)
+  HX8357_t3 tft = HX8357_t3(_CS,_DC);
+  #define BLACK       HX8357_BLACK      
+  #define NAVY        HX8357_NAVY       
+  #define DARKGREEN   HX8357_DARKGREEN  
+  #define DARKCYAN    HX8357_DARKCYAN   
+  #define MAROON      HX8357_MAROON     
+  #define PURPLE      HX8357_PURPLE     
+  #define OLIVE       HX8357_OLIVE      
+  #define LIGHTGREY   HX8357_LIGHTGREY  
+  #define DARKGREY    HX8357_DARKGREY   
+  #define BLUE        HX8357_BLUE       
+  #define GREEN       HX8357_GREEN      
+  #define CYAN        HX8357_CYAN       
+  #define RED         HX8357_RED        
+  #define MAGENTA     HX8357_MAGENTA    
+  #define YELLOW      HX8357_YELLOW     
+  #define WHITE       HX8357_WHITE      
+  #define ORANGE      HX8357_ORANGE     
+  #define GREENYELLOW HX8357_GREENYELLOW
+  #define PINK        HX8357_PINK   
+  #define setTextScale setTextSize   // Just a quick fix cause the libraries don't quite match up
+  #define SCREENSIZE_X HX8357_TFTWIDTH
+  #define SCREENSIZE_Y HX8357_TFTHEIGHT
+#endif
 
 /////////// Dot Object Declaration ///////////////
-#define DOT_XSTART 64
-#define DOT_YSTART 64
-#define DOT_SIZE 5
+#define DOT_XSTART SCREENSIZE_X/2
+#define DOT_YSTART SCREENSIZE_Y/2
+#define DOT_SIZE 15
 #define DOT_COLOR RED
 #define DOT_XMIN 0
-#define DOT_XMAX 127
+#define DOT_XMAX SCREENSIZE_X-1
 #define DOT_YMIN 10
-#define DOT_YMAX 127
+#define DOT_YMAX SCREENSIZE_Y-1
 
 struct obj_dot {
   Matrix position;
@@ -33,12 +70,12 @@ struct obj_dot {
 Matrix AcclEndPoint(3,1);
 Matrix VelEndPoint(3,1);
 
-double accelerationFactor = 1.5;
+double accelerationFactor = 3;
 double dampingFactor = 0.9;
-double dotMaxVel = 10;
+double dotMaxVel = 20;
 
 /////////// Food Object Declaration
-#define FOOD_SIZE 2
+#define FOOD_SIZE 5
 #define FOOD_COLOR YELLOW
 
 struct obj_food {
@@ -48,7 +85,7 @@ struct obj_food {
 
   // Members  
   Matrix position;
-  char   color = BLUE;
+  char   color = YELLOW;
   bool   isWithinRadius(int x, int y, int r) { return pow(x-position(0),2) + pow(y-position(1),2) <= pow(r,2); }
   static obj_food& createFood(int x, int y);
   static void destroyFood(int index);
@@ -85,8 +122,6 @@ float x_accl;
 float y_accl;
 float z_accl;
 
-TFT_ST7735 tft = TFT_ST7735(_CS,_DC);
-
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
@@ -108,10 +143,11 @@ void resetGame() {
 
   // Create initial food on screen
   randomSeed(analogRead(A0));
-  for (int i = 0; i < 12; i++) { obj_food::createFood(random(128),random(116)+12); }  
+  for (int i = 0; i < 12; i++) { obj_food::createFood(random(DOT_XMAX),random(DOT_YMAX-12)+12); }  
 
   // clear screen
-  tft.clearScreen();
+  tft.fillScreen(BLACK);
+  tft.setCursor(0,0);
 
   score = 0;
   timeRemaining = TIMEPERROUND;
@@ -138,7 +174,7 @@ void loop() {
  
     // Create new food
     if (random(100)<5) {
-      obj_food::createFood(random(128),random(116)+12);
+      obj_food::createFood(random(DOT_XMAX),random(DOT_YMAX-12)+12);
     }
 
     // Countdown
@@ -146,14 +182,15 @@ void loop() {
     if (timeRemaining <= 0) { gameState = GAMEOVER; }
   } 
   else {
-    tft.clearScreen();
+    tft.fillScreen(BLACK);
+    tft.setCursor(0,0);
     tft.setTextScale(2);
     tft.setTextColor(RED);
-    tft.setCursor(CENTER, 50, SCREEN);
+    tft.setCursor(0, 50);
     tft.print("GAME OVER\n");
     tft.setTextScale(1);
     tft.setTextColor(WHITE);
-    tft.setCursor(CENTER, 80, SCREEN);
+    tft.setCursor(0,80);
     tft.print("SHAKE TO RETRY");
     drawScorebar();
     waitForShake(20000);
@@ -165,15 +202,14 @@ void loop() {
 }
 
 void drawScorebar() {
-  tft.fillRect(60,0,128,10,BLACK);
-  
-  tft.setTextScale(1);
+  tft.fillRect(SCREENSIZE_X/2,0,SCREENSIZE_X,15,BLACK);
+  tft.setTextScale(2);
   tft.setTextColor(WHITE,BLACK);
   tft.setCursor(0,0);
   tft.print("Score: ");
   tft.print(score);
 
-  tft.setCursor(60,0);
+  tft.setCursor(SCREENSIZE_X/2,0);
   tft.print(timeRemaining);
 }
 
@@ -182,8 +218,8 @@ void drawSlidingDot() {
 }
 
 void drawVectors() {
-  tft.drawLine(dot.position(0),dot.position(1),AcclEndPoint(0),AcclEndPoint(1),GREEN);
-  tft.drawLine(dot.position(0),dot.position(1),VelEndPoint(0),VelEndPoint(1),BLUE);
+  tft.drawLine(max(0,dot.position(0)),max(0,dot.position(1)),max(0,AcclEndPoint(0)),max(0,AcclEndPoint(1)),GREEN);
+  tft.drawLine(max(0,dot.position(0)),max(0,dot.position(1)),max(0,VelEndPoint(0)),max(0,VelEndPoint(1)),BLUE);
 }
 
 void drawFood() {
@@ -195,7 +231,7 @@ void drawFood() {
 }
 
 void clearSlidingDot() {
-  tft.fillCircle(dot.position(0),dot.position(1),max(7,max(dot.velocity.norm()*6,dot.accl.norm()*21)),BLACK);
+  tft.fillCircle(dot.position(0),dot.position(1),max(DOT_SIZE+1,max(dot.velocity.norm()*6,dot.accl.norm()*21)),BLACK);
 }
 
 void dotMatrixMath() {
